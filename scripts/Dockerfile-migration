@@ -1,0 +1,58 @@
+# ====================================
+# Dependencies Stage - Install dependencies
+# ====================================
+FROM node:18-alpine AS deps
+WORKDIR /app
+
+# Install system dependencies
+RUN apk add --no-cache libc6-compat
+
+# Copy package files
+COPY package*.json ./
+RUN npm ci --only=production --omit=dev
+
+# ====================================
+# Build Stage - Prepare migration tools
+# ====================================
+FROM node:18-alpine AS builder
+WORKDIR /app
+
+# Install TypeScript tools
+RUN apk add --no-cache libc6-compat && \
+    npm install -g tsx
+
+# Copy migration files
+COPY scripts ./scripts
+COPY .db ./.db
+COPY tsconfig.json ./
+
+# ====================================
+# Production Stage - Run migration
+# ====================================
+FROM node:18-alpine AS runner
+WORKDIR /app
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Install runtime dependencies
+RUN apk add --no-cache libc6-compat && \
+    npm install -g tsx
+
+# Copy production dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy migration files from builder stage
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
+COPY --from=builder --chown=nextjs:nodejs /app/.db ./.db
+COPY --from=builder /app/tsconfig.json ./
+
+# Set production environment
+ENV NODE_ENV=production
+
+# Switch to non-root user
+USER nextjs
+
+# Run migration
+CMD ["tsx", "scripts/migrate-data.ts"]

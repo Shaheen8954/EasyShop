@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # DATABASE SERVICE - MongoDB
+  # ==========================================
+  mongodb:
+    image: mongo:6.0
+    container_name: easyshop-mongodb
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_DATABASE=easyshop
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - easyshop-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # DATA MIGRATION SERVICE
+  # ==========================================
+  migration:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile-migration
+    container_name: easyshop-migration
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - easyshop-network
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongodb:27017/easyshop
+    restart: "no"  # Run once only
+
+  # ==========================================
+  # APPLICATION SERVICE - Next.js App
+  # ==========================================
+  easyshop-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: easyshop-app
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongodb:27017/easyshop
+      - NEXTAUTH_URL=http://localhost:8081
+      - PORT=3000
+    ports:
+      - "3001:3000"
+    networks:
+      - easyshop-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================
+  # WEB SERVER SERVICE - Nginx
+  # ==========================================
+  nginx:
+    image: nginx:alpine
+    container_name: easyshop-nginx
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - easyshop-app
+    networks:
+      - easyshop-network
+
+networks:
+  easyshop-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
